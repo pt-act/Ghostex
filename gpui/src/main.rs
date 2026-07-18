@@ -49024,7 +49024,24 @@ impl GhostexGpuiApp {
             return;
         }
 
-        cef::initialize(cx).expect("failed to initialize CEF");
+        if let Err(error) = cef::initialize(cx) {
+            // CEF initialization can fail when a previous crashed instance
+            // left a stale SingletonLock in the root cache directory, or when
+            // the CEF framework/helper bundle is unavailable. This runs
+            // inside the macOS display_layer frame callback (a non-unwindable
+            // ObjC context), so a panic here aborts the process via
+            // panic_cannot_unwind and breakpad writes an empty minidump
+            // (CDXC:GPUICefInitFallible 2026-07-18). Mirror the
+            // CefSurface::try_new failure path below: persist a support-log
+            // entry and keep the app alive without sidebar/browser CEF
+            // surfaces instead of aborting.
+            support_logs::append(
+                support_logs::GpuiSupportLog::CrashReports,
+                "gpui.cef.initializeFailed",
+                serde_json::json!({ "error": format!("{error:#}") }),
+            );
+            return;
+        }
         let parent_ns_view = self.parent_ns_view;
         let sidebar_url = self.sidebar_url.clone();
         let sidebar_bridge_event_handler = self.sidebar_bridge_event_handler(cx);
